@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.publisher/
+evidence/
+scripts/
+HANDOFF.md
+LOCAL_README.md
+.env
+.env.*
+*.har
+*.log

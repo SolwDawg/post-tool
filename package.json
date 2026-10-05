@@ -1,0 +1,28 @@
+{
+  "name": "content-publisher-cli",
+  "version": "0.1.0",
+  "private": true,
+  "description": "CLI nhập folder content và đăng truyện lên Bio Blog",
+  "type": "module",
+  "bin": {
+    "content-publisher": "dist/cli.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test dist/tests/*.test.js",
+    "cli": "node dist/cli.js"
+  },
+  "dependencies": {
+    "jsdom": "26.1.0",
+    "tough-cookie": "5.1.2"
+  },
+  "devDependencies": {
+    "@types/jsdom": "21.1.7",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.7.3"
+  }
+}

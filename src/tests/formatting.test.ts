@@ -1,0 +1,63 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+import { JSDOM } from 'jsdom';
+import { formatContent, verifyFormatting } from '../formatting.js';
+import { htmlText, loadStory, sanitizeHtml } from '../content.js';
+import { buildPayload, previewHtml, verifyPosts } from '../plan.js';
+import { fixture, workspace, requireStory, options, detailsFor } from './helpers.js';
+
+test('reader layout preserves text, inline emphasis, links and scene boundaries, with no title insertion',()=>{
+  const source='<p>A <strong>brave</strong> child &amp; his mother.</p><blockquote><p>“We stay together.”</p></blockquote><hr><h2>The next morning</h2><p><em>Hope</em> arrived. <a href="https://example.com/story">Read more</a></p>';
+  const styled=formatContent(source,'reader');
+  assert.equal(htmlText(styled),htmlText(source));
+  const doc=new JSDOM(styled).window.document;
+  assert.equal(doc.querySelector('body > div')!.getAttribute('style')!.includes('max-width:760px'),true);
+  assert.equal(doc.querySelectorAll('hr').length,1);
+  assert.equal(doc.querySelectorAll('strong,em').length,2);
+  assert.equal(doc.querySelector('a')!.getAttribute('href'),'https://example.com/story');
+  assert.equal(doc.querySelectorAll('h1').length,0);
+  verifyFormatting(styled,sanitizeHtml(styled));
+  assert.equal(formatContent(source),source);
+  assert.equal(formatContent('','reader'),'');
+});
+test('reader formatter removes active content; layout verifier rejects stripped CSS even with identical text',()=>{
+  const styled=formatContent('<p onclick="bad()">Story.</p><script>bad()</script><img src="javascript:bad()">','reader');
+  assert(!styled.includes('bad()'));
+  const doc=new JSDOM(styled).window.document;
+  for(const node of doc.querySelectorAll('[style]'))node.removeAttribute('style');
+  assert.equal(htmlText(doc.body.innerHTML),htmlText(styled));
+  assert.throws(()=>verifyFormatting(styled,doc.body.innerHTML),/style/);
+});
+test('formatted normal/batch payload and preview share HTML; persisted layout is verified separately from plain text',async t=>{
+  const story=requireStory(await loadStory(await fixture(await workspace(t),2)));
+  const opts={...options,formatting:'reader' as const};
+  const payload=buildPayload(story,opts,[1],[2]);
+  assert.equal(payload.description,''); assert.equal(payload.skip_intro,true);
+  assert.equal(payload.chapters![0]!.description,formatContent(story.chapters[0]!.html,'reader'));
+  const previewDoc=new JSDOM(previewHtml(story,[],opts)).window.document;
+  verifyFormatting(payload.chapters![0]!.description,previewDoc.querySelector('article > div')!.outerHTML);
+  const saved=detailsFor(payload);
+  verifyPosts(payload,saved,'reader');
+  const doc=new JSDOM(saved[0]!.description).window.document;
+  doc.querySelector('div')!.removeAttribute('style'); saved[0]!.description=doc.body.innerHTML;
+  assert.throws(()=>verifyPosts(payload,saved,'reader'),/style/);
+  const one={...story,chapters:[story.chapters[0]!]};
+  assert.equal(buildPayload(one,opts,[],[]).description,formatContent(one.chapters[0]!.html,'reader'));
+});
+test('CLI reader preview exports exact Source Code HTML, leaves source unchanged and validates option offline',async t=>{
+  const root=await workspace(t); const folder=await fixture(root,1);
+  const before=await readFile(path.join(folder,'article_seo_ready.html'));
+  const cli=fileURLToPath(new URL('../cli.js',import.meta.url));
+  const execute=promisify(execFile);
+  const result=JSON.parse((await execute(process.execPath,[cli,'preview',folder,'--format','reader','--state',path.join(root,'state')])).stdout);
+  const plan=JSON.parse(await readFile(result.plan,'utf8'));
+  assert.equal(result.format,'reader'); assert.equal(result.source_html.length,1);
+  assert.equal(await readFile(result.source_html[0].file,'utf8'),plan.payload.description);
+  assert.deepEqual(await readFile(path.join(folder,'article_seo_ready.html')),before);
+  await assert.rejects(execute(process.execPath,[cli,'publish',folder,'--format','unknown','--site','http://127.0.0.1:1']),/source hoặc reader/);
+});
