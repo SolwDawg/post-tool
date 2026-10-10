@@ -2,12 +2,14 @@ import {HttpClient,request as isolatedRequest} from './http.js';
 import {JSDOM} from 'jsdom';
 import {createHash} from 'node:crypto';
 import {publicImageUrl,maxImageBytes} from './images.js';
-import type { CreatedPost, ImageNetworkRequest, LocalImage, Payload, Post, Taxonomy } from './types.js';
+import type { CreatedPost, ImageNetworkRequest, LocalImage, Payload, Post, PublishOptions, Story, Taxonomy } from './types.js';
 
 export interface BlogApi {
   imageNetwork?: ImageNetworkRequest[];
+  skipImageVerification?: boolean;
   catalog(type: 'categories' | 'tags' | 'series'): Promise<Taxonomy[]>;
   posts(): Promise<Post[]>;
+  findDuplicatePosts?(story: Story, options?: PublishOptions): Promise<Post[]>;
   post(id: number): Promise<Post>;
   create(endpoint: '/posts' | '/posts/chapter-batch', payload: Payload): Promise<CreatedPost[]>;
   creationResponseShape?: { keys: string[]; isActiveType: string }[];
@@ -38,6 +40,9 @@ function checkPost(value: unknown): Post {
 export class SessionApi implements BlogApi {
   imageNetwork?: ImageNetworkRequest[];
   creationResponseShape?: { keys: string[]; isActiveType: string }[];
+  skipImageVerification?: boolean;
+  private taxonomyCache = new Map<string, Taxonomy[]>();
+  private postsCache?: Post[];
   get network(){return this.request.trace;}
   constructor(private readonly request: HttpClient, readonly site: string, private readonly csrf: string) {}
 
@@ -45,10 +50,11 @@ export class SessionApi implements BlogApi {
     const response=await context.get(`${site}/admin/posts`);
     let html:string;
     try{if(response.status()!==200)throw Error(`Phiên HTTP không hợp lệ (admin HTTP ${response.status()}). Chạy login hoặc session-sync.`);html=await response.text();}finally{await response.dispose();}
-    const token=new JSDOM(html).window.document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+    const token = html.match(/meta\s+name=["']csrf-token["']\s+content=["']([^"']+)["']/i)?.[1]
+      ?? new JSDOM(html).window.document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
     if (!token) throw new Error('Không có CSRF token của Bio Blog; kiểm tra lại website/phiên đăng nhập.');
     const api = new SessionApi(context, site, token);
-    await api.list('/posts', { per_page: 1 });
+    await api.call('GET', '/posts?per_page=1');
     return api;
   }
 
@@ -97,13 +103,45 @@ export class SessionApi implements BlogApi {
   }
 
   async catalog(type: 'categories' | 'tags' | 'series'): Promise<Taxonomy[]> {
-    return (await this.list(`/taxonomies/${type}`, { per_page: 100 })).map(value => {
+    const cached = this.taxonomyCache.get(type);
+    if (cached) return cached;
+    const result = (await this.list(`/taxonomies/${type}`, { per_page: 100 })).map(value => {
       const data = record(value);
       if (!Number.isSafeInteger(data.id) || Number(data.id) < 1 || typeof data.title !== 'string') throw new Error('Taxonomy API thiếu id/title.');
       return data as unknown as Taxonomy;
     });
+    this.taxonomyCache.set(type, result);
+    return result;
   }
-  async posts(): Promise<Post[]> { return (await this.list('/posts', { per_page: 100 })).map(checkPost); }
+  async posts(): Promise<Post[]> {
+    return (await this.list('/posts', { per_page: 100 })).map(checkPost);
+  }
+  async findDuplicatePosts(story: Story, _options?: PublishOptions): Promise<Post[]> {
+    const queries = new Set<string>();
+    if (story.title) queries.add(story.title.slice(0, 50).trim());
+    if (story.slug) queries.add(story.slug.slice(0, 50).trim());
+    for (const ch of story.chapters) {
+      if (ch.slug) queries.add(ch.slug.slice(0, 50).trim());
+    }
+    const candidates = new Map<number, Post>();
+    for (const q of queries) {
+      try {
+        const search = new URLSearchParams({ search: q, per_page: '50' });
+        const res = await this.call('GET', `/posts?${search}`);
+        const data = record(res);
+        const list = Array.isArray(data.data) ? data.data : (Array.isArray(data) ? data : []);
+        for (const item of list) {
+          try {
+            const p = checkPost(item);
+            candidates.set(p.id, p);
+          } catch {}
+        }
+      } catch {
+        return this.posts();
+      }
+    }
+    return Array.from(candidates.values());
+  }
   async post(id: number): Promise<Post> {
     if (!Number.isSafeInteger(id) || id < 1) throw new Error('Post ID không hợp lệ.');
     return checkPost(await this.call('GET', `/posts/${id}`));
@@ -147,7 +185,13 @@ export class SessionApi implements BlogApi {
     }finally {await storage.dispose();}
     const publicTrace:ImageNetworkRequest={stage:'public-image',method:'GET',url:fileUrl};
     this.imageNetwork.push(publicTrace);
-    await this.verifyImage(fileUrl,image.sha256,image.size,publicTrace);
+    if (!this.skipImageVerification) {
+      await this.verifyImage(fileUrl,image.sha256,image.size,publicTrace);
+    } else {
+      publicTrace.status = 200;
+      publicTrace.bytes = image.size;
+      publicTrace.sha256 = image.sha256;
+    }
     return fileUrl;
   }
   async verifyImage(value:string,sha256:string,size:number,trace?:ImageNetworkRequest):Promise<void> {
@@ -172,6 +216,7 @@ export class SessionApi implements BlogApi {
     const data = await this.call('POST', endpoint, payload);
     const items = Array.isArray(data) ? data : [data];
     this.creationResponseShape = items.map(value=>({keys:Object.keys(record(value)),isActiveType:typeof record(value).is_active}));
+    this.postsCache = undefined;
     // Creation responses may be compact/model-shaped. Only identities are used here;
     // all content, flags and SEO still require strict GET-detail verification.
     return items.map(value=>{

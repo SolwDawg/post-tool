@@ -69,6 +69,19 @@ test('taxonomy names must resolve exactly; global chapter slug collisions and se
   assert.equal(duplicates(story, [], [{ id: 3, title: story.title }]).length, 1);
   assert.equal(duplicates(story, [{ id: 2, title: 'Different title', slug: story.chapters[0]!.slug, is_active: true }], []).length, 1);
 });
+test('SEO description whitespace normalization is accepted, but missing words and changed keywords fail', async t => {
+  const story = requireStory(await loadStory(await fixture(await workspace(t), 1)));
+  const payload = buildPayload(story, options, [1], [2]);
+  payload.seo_description = 'A story.  Courage\n and kindness.';
+  const details = detailsFor(payload);
+  details[0]!.seo_description = 'A story. Courage and kindness.';
+  assert.doesNotThrow(() => verifyPosts(payload, details));
+  details[0]!.seo_description = 'A story. Courage.';
+  assert.throws(() => verifyPosts(payload, details), /SEO/);
+  details[0]!.seo_description = 'A story. Courage and kindness.';
+  details[0]!.seo_keywords = 'different';
+  assert.throws(() => verifyPosts(payload, details), /SEO/);
+});
 test('single-chapter normal mode creates one post; public is explicit', async t => {
   const root = await workspace(t); const story = requireStory(await loadStory(await fixture(root, 1)));
   const api = new FakeApi(); const journal = await Journal.open(path.join(root, 'state'));

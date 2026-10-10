@@ -97,7 +97,9 @@ export function verifyPosts(payload: Payload, details: Post[], formatting: Conte
       const next = expected[index + 1]?.slug ?? null;
       if ((detail.prev_chapter || null) !== previous || (detail.next_chapter || null) !== next) throw new Error(`Chương ${index + 1}: liên kết trước/sau không đúng thứ tự.`);
     }
-    if ((detail.seo_title ?? '') !== payload.seo_title || (detail.seo_description ?? '') !== payload.seo_description ||
+    // Bio Blog collapses repeated whitespace in meta descriptions on save.
+    // Compare their text while retaining exact title/keyword verification.
+    if ((detail.seo_title ?? '') !== payload.seo_title || normalizeText(detail.seo_description ?? '') !== normalizeText(payload.seo_description) ||
         (detail.seo_keywords ?? '') !== payload.seo_keywords) throw new Error(`Chương/bài ${index + 1}: SEO sau lưu không khớp.`);
   }
 }

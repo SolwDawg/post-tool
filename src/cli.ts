@@ -36,6 +36,7 @@ publisher.cmd check PATH                Đối chiếu taxonomy và bài trùng,
 publisher.cmd publish PATH              In bản chuẩn bị offline; không đăng nếu thiếu --execute
 publisher.cmd publish PATH --execute    Tạo và xác minh bài nháp
 publisher.cmd publish PATH --execute --public  Tạo và xác minh bài công khai
+publisher.cmd publish PATH --execute --public --fast --concurrency N   Chạy N luồng song song (mặc định: 1, tối đa: 10)
 publisher.cmd status                    Đọc nhật ký cục bộ
 publisher.cmd reconcile RECEIPT_ID      Kiểm tra lại request chưa rõ kết quả, không gửi lại
 publisher.cmd reconcile-image SHA256   Đọc ảnh công khai, xác minh upload; không gửi lại
@@ -79,6 +80,8 @@ const parsed = parseArgs({ allowPositionals: true, options: {
   out: { type: 'string' },
   format: { type: 'string', default: 'source' },
   'series-title': { type: 'string' },
+  fast: { type: 'boolean' },
+  concurrency: { type: 'string', default: '1' },
 } });
 const values = parsed.values;
 const [command, argument, ...rest] = parsed.positionals;
@@ -123,7 +126,8 @@ async function publishOptions(): Promise<PublishOptions> {
   return { visibility: values.public ? 'public' : 'draft', imageUrl: values['image-url']!,
     imageFile:values['image-file'],noImage:!!values['no-image'],bodyImage:!!values['body-image'],
     categories: values.category, tags: values.tag, mapping, showHome: !!values['show-home'], topNews: !!values['top-news'],
-    formatting: values.format as 'source' | 'reader', seriesTitle: values['series-title']?.trim() };
+    formatting: values.format as 'source' | 'reader', seriesTitle: values['series-title']?.trim(), fast: !!values.fast,
+    concurrency: values.concurrency ? Math.min(Math.max(1, parseInt(values.concurrency, 10) || 1), 10) : 1 };
 }
 
 async function withApi<T>(journal: Journal, operation: (api: BlogApi, context: HttpClient, browserNetwork?:RequestTrace[]) => Promise<T>, login = false): Promise<T> {
@@ -293,9 +297,9 @@ async function main(): Promise<void> {
       output(receiptSummary(await reconcileReceipt(api, journal, receipt))); return;
     }
     const options = await publishOptions();
-    for (const validation of validations) {
-      const story = validation.story as Story;
-      if (command === 'check') {
+    if (command === 'check') {
+      for (const validation of validations) {
+        const story = validation.story as Story;
         const prepared = await prepareOnline(api, story, options);
         output({ ...summarize(validation), site, visibility: options.visibility, existing: prepared.existing,
           publication_title: prepared.payload.title, publication_slug: prepared.payload.slug,
@@ -304,10 +308,50 @@ async function main(): Promise<void> {
           format:options.formatting,
           selected_categories: prepared.payload.selected_categories, selected_tags: prepared.payload.selected_tags,
           note: 'Chỉ đọc website. Nếu existing không rỗng thì publish sẽ dừng.' });
+      }
+    } else {
+      const concurrency = options.concurrency ?? 1;
+      const total = validations.length;
+      if (concurrency > 1 && total > 1) {
+        console.log(`Bắt đầu đăng song song ${concurrency} luồng cho ${total} bộ truyện...`);
+      }
+      const publishOne = async (validation: Validation, index: number) => {
+        const story = validation.story as Story;
+        console.log(`[${index + 1}/${total}] Bắt đầu: ${story.title} — ${story.chapters.length} chương — ${options.visibility}`);
+        if (story.chapters.length > 1 && concurrency === 1) console.log('SEO: dùng SEO toàn truyện cho các chương; không áp dụng SEO riêng từng chương trong bản 0.1.');
+        const receipt = await publishStory(api, journal, site, story, options);
+        if (options.fast && receipt.posts.length) {
+          try {
+            const rootDir = path.basename(story.folder).toLowerCase() === 'content' ? path.dirname(story.folder) : story.folder;
+            const allUrls = receipt.posts.map(p => p.url).join('\n');
+            const primaryUrl = receipt.posts[0]?.url;
+            await writeFile(path.join(rootDir, 'published_links.txt'), allUrls + '\n', 'utf8');
+            const pinText = `👇 READ THE FULL STORY HERE:\n🔗 ${primaryUrl}\n\n✨ Don’t wait for Part 2 — find out what happens next right now! 🥊🔥\n`;
+            await writeFile(path.join(rootDir, 'pinned_comment.txt'), pinText, 'utf8');
+          } catch {}
+        }
+        if (concurrency > 1) {
+          console.log(`[${index + 1}/${total}] HOÀN THÀNH: ${story.title} (${receipt.posts.length} posts)`);
+        }
+        output(receiptSummary(receipt));
+        return receipt;
+      };
+
+      if (concurrency > 1 && total > 1) {
+        let nextIndex = 0;
+        const workers = Array.from({ length: Math.min(concurrency, total) }, async () => {
+          while (nextIndex < total) {
+            const i = nextIndex++;
+            const v = validations[i];
+            if (v) await publishOne(v, i);
+          }
+        });
+        await Promise.all(workers);
       } else {
-        console.log(`${story.title} — ${story.chapters.length} chương — ${options.visibility}`);
-        if (story.chapters.length > 1) console.log('SEO: dùng SEO toàn truyện cho các chương; không áp dụng SEO riêng từng chương trong bản 0.1.');
-        output(receiptSummary(await publishStory(api, journal, site, story, options)));
+        for (let i = 0; i < total; i++) {
+          const v = validations[i];
+          if (v) await publishOne(v, i);
+        }
       }
     }
   }, command === 'login');

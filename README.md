@@ -46,7 +46,21 @@ Tool nhận folder content; không cào nguồn, đọc Excel, tạo caption ho�
 .\publisher.cmd publish "D:\Stories\1\content"
 ```
 
-`publish` thiếu `--execute` chỉ in kế hoạch offline. Chỉ lệnh sau mới tạo bài công khai:
+`publish` thiếu `--execute` chỉ in kế hoạch offline.
+
+Thêm cờ `--fast` để tăng tốc độ publish từ ~3 phút xuống dưới 3 giây/bài (tự động bỏ qua khâu tải ngược ảnh từ CDN, kiểm tra trùng nhanh qua search API và tự động ghi `published_links.txt` & `pinned_comment.txt` vào thư mục truyện):
+
+```powershell
+.\publisher.cmd publish "D:\Stories\1\content" --execute --public --format reader --tag "Drama" --fast
+
+Chạy song song nhiều luồng (Concurrency) khi đăng một thư mục chứa nhiều bộ truyện để tăng tốc tối đa (khuyên dùng từ 3 đến 5 luồng):
+
+```powershell
+.\publisher.cmd publish "D:\Stories" --execute --public --format reader --fast --concurrency 3
+```
+```
+
+Chỉ lệnh sau mới tạo bài công khai (chế độ tiêu chuẩn):
 
 ```powershell
 .\publisher.cmd publish "D:\Stories\1\content" --execute --public --format reader --body-image --category "Biker Stories" --tag "Drama"
@@ -142,7 +156,7 @@ Journal intent được lưu trước mutation. Timeout, crash, HTTP lỗi hoặ
 .\publisher.cmd resolve-image SHA256 --not-created --note "Đã kiểm tra không upload ảnh."
 ```
 
-Sau tạo, GET detail đối chiếu text, SEO, taxonomy, ảnh/src/alt, visibility, series và liên kết chapter; reader còn kiểm tra CSS. Ảnh công khai đối chiếu size/hash. Lock theo website chặn hai CLI writers đồng thời.
+Sau tạo, GET detail đối chiếu text, SEO, taxonomy, ảnh/src/alt, visibility, series và liên kết chapter; reader còn kiểm tra CSS. Meta description được so sánh sau chuẩn hóa khoảng trắng vì website tự gộp khoảng trắng khi lưu; mất hoặc đổi từ vẫn bị từ chối. Ảnh công khai đối chiếu size/hash. Lock theo website chặn hai CLI writers đồng thời.
 
 `network [POST_ID]` chỉ đọc API, trả path/method/status/tên header/schema keys, không lộ giá trị cookie/token. State không được đặt trong folder content. Exit code: 0 thành công, 2 content needs_review, 1 lỗi vận hành.
 
@@ -153,4 +167,4 @@ npm.cmd run typecheck
 npm.cmd test
 ```
 
-50 tests dùng HTTP server mock, không đăng production. Có test CDP thật trên Chrome với profile tạm riêng, cookie persistence/DPAPI, POST/batch/storage, timeout/abort/redirect, journal/replay/reconcile, source safety và HTML/image verification. Chrome cần có để chạy bộ kiểm thử CDP.
+51 tests dùng HTTP server mock, không đăng production. Có test CDP thật trên Chrome với profile tạm riêng, cookie persistence/DPAPI, POST/batch/storage, timeout/abort/redirect, journal/replay/reconcile, source safety và HTML/image verification. Chrome cần có để chạy bộ kiểm thử CDP.

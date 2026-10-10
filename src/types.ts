@@ -42,6 +42,8 @@ export interface PublishOptions {
   mapping: { categories?: Record<string, string[]>; tags?: Record<string, string[]> };
   showHome: boolean;
   topNews: boolean;
+  fast?: boolean;
+  concurrency?: number;
 }
 export interface Taxonomy { id: number; title: string; slug?: string }
 export interface Post {

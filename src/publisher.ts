@@ -10,7 +10,8 @@ export async function prepareOnline(api: BlogApi, story: Story, options: Publish
   const image=await imageForStory(story,options);
   if(options.bodyImage&&!image&&!options.imageUrl)throw new Error('--body-image cần Thumbnail.jpg, --image-file hoặc --image-url.');
   const [categories, tags, series, posts] = await Promise.all([
-    api.catalog('categories'), api.catalog('tags'), api.catalog('series'), api.posts(),
+    api.catalog('categories'), api.catalog('tags'), api.catalog('series'),
+    api.findDuplicatePosts ? api.findDuplicatePosts(story, options) : api.posts(),
   ]);
   const existing = duplicates(publicationStory(story, options), posts, series);
   const payload = buildPayload(story, options,
@@ -24,6 +25,9 @@ function links(site: string, posts: CreatedPost[]): Receipt['posts'] {
 }
 
 export async function publishStory(api: BlogApi, journal: Journal, site: string, story: Story, options: PublishOptions): Promise<Receipt> {
+  if (options.fast) {
+    api.skipImageVerification = true;
+  }
   publicationStory(story, options); // Validate the namespace before any read or dispatch.
   const key = storyKey(site, story, options.seriesTitle);
   const previous = (await journal.all(site)).filter(r => r.storyKey === key && r.status !== 'resolved-not-created');
