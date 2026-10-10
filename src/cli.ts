@@ -326,7 +326,7 @@ async function main(): Promise<void> {
             const allUrls = receipt.posts.map(p => p.url).join('\n');
             const primaryUrl = receipt.posts[0]?.url;
             await writeFile(path.join(rootDir, 'published_links.txt'), allUrls + '\n', 'utf8');
-            const pinText = `👇 READ THE FULL STORY HERE:\n🔗 ${primaryUrl}\n\n✨ Don’t wait for Part 2 — find out what happens next right now! 🥊🔥\n`;
+            const pinText = `The moment that changed everything:\n👉 ${primaryUrl}\n`;
             await writeFile(path.join(rootDir, 'pinned_comment.txt'), pinText, 'utf8');
           } catch {}
         }
